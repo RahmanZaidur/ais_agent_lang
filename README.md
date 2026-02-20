@@ -85,6 +85,25 @@ After generating the cleaned daily outputs, the cleaned subsets can be combined 
 
 ---
 
+## Script: `upload_to_postgresql.ipynb`
+
+This notebook uploads the final combined AIS dataset into a Supabase-hosted PostgreSQL database with PostGIS enabled, preparing it for spatial and temporal queries from the agent.
+
+What it does:
+- Connects to Supabase (PostgreSQL) using a SQLAlchemy engine
+- Loads the final combined CSV into a Pandas DataFrame
+- Parses the `BaseDateTime` column into a proper timestamp datatype
+- Creates a PostGIS-compatible `geometry` column from `LAT`/`LON` as point features (EPSG:4326)
+- Renames all columns to lowercase to avoid PostgreSQL case-sensitivity issues (e.g., `MMSI` → `mmsi`)
+- Uploads the dataset into the `ais_signals` table, replacing any existing table/data
+
+Implementation notes (as reflected in the script):
+- The geometry conversion uses GeoPandas (`GeoDataFrame` + `points_from_xy`)
+- The upload uses `to_postgis(...)` with `if_exists="replace"` and chunked inserts (`chunksize=1000`)
+- After upload, the script prints the final column list (lowercased) for a quick sanity check
+
+---
+
 ## Script: `sql_agent_v2.ipynb`
 
 The end-to-end LangGraph workflow is implemented in `sql_agent_v2.ipynb` and is organized into phases.
