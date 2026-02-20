@@ -13,7 +13,7 @@ At a high level, the assistant:
 ---
 ## Script: `ais_data_filter.ipynb`
 
-This notebook prepares a reduced, higher-quality AIS dataset from NOAA’s AIS archives. Because the raw AIS files are very large, the workflow focuses on a limited slice (first five days of January 2024), applies quality filters, and then reduces the dataset further by keeping only “high-frequency” vessels (vessels that appear many times in the data).
+This notebook prepares a reduced, higher-quality AIS dataset from NOAA’s AIS archives (https://coast.noaa.gov/htdata/CMSP/AISDataHandler/2024/index.html). Because the raw AIS files are very large, the workflow focuses on a limited slice (first five days of January 2024), applies quality filters, and then reduces the dataset further by keeping only “high-frequency” vessels (vessels that appear many times in the data).
 
 ### Data Source
 
