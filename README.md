@@ -104,9 +104,9 @@ Implementation notes (as reflected in the script):
 
 ---
 
-## Script: `sql_agent_v1.ipynb` (v1.4)
+## Script: `sql_agent_v8.ipynb` (v1.4)
 
-The end-to-end LangGraph workflow is implemented in `sql_agent_v1.ipynb`. The agent runs as a ReAct-style loop where the **agent node owns synthesis** and iterates through **validate → execute → heal** until it has enough tool evidence to answer.
+The end-to-end LangGraph workflow is implemented in `sql_agent_v8.ipynb`. The agent runs as a ReAct-style loop where the **agent node owns synthesis** and iterates through **validate → execute → heal** until it has enough tool evidence to answer.
 
 ### 1) Database Connectivity
 
@@ -204,6 +204,8 @@ Outputs:
 - Incremented `retry_count`
 
 ---
+
+![AIS SQL Agent Graph Diagram](agent_graph_diagram_v8.png)
 
 ### 6) Graph Construction & Routing
 
