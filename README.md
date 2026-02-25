@@ -1,4 +1,4 @@
-# AIS SQL Agent (LangGraph + Postgres/PostGIS)
+## AIS SQL Agent (LangGraph + Postgres/PostGIS)
 
 This project provides an AI assistant that answers maritime AIS telemetry questions by translating natural-language requests into safe, read-only SQL queries against a PostgreSQL/PostGIS database. It is designed to work specifically with an `ais_data` table containing vessel position reports and related metadata.
 
@@ -104,9 +104,9 @@ Implementation notes (as reflected in the script):
 
 ---
 
-## Script: `sql_agent_v2.ipynb`
+## Script: `sql_agent_v1.ipynb` (v1.4)
 
-The end-to-end LangGraph workflow is implemented in `sql_agent_v2.ipynb` and is organized into phases.
+The end-to-end LangGraph workflow is implemented in `sql_agent_v1.ipynb`. The agent runs as a ReAct-style loop where the **agent node owns synthesis** and iterates through **validate → execute → heal** until it has enough tool evidence to answer.
 
 ### 1) Database Connectivity
 
@@ -131,16 +131,17 @@ This tool executes the generated SQL against the database and returns the result
 
 ### 3) State Management
 
-The notebook defines an `AgentState` (`TypedDict`) that carries data through the workflow, including:
+The notebook defines an `AgentState` (`TypedDict`) focused on a message-first ReAct trace:
 
-- `question`: user input
+- `messages`: full conversation trace (Human → AI tool-call → ToolMessage → AI answer)
 - `schema_context`: schema/rules provided to the LLM
 - `sql_query`: generated SQL (if required)
+- `current_tool_call_id`: tool call ID used to bind SQL outputs back into history
 - `validation_status`: `VALID` / `INVALID`
 - `critique`: validator feedback or DB error details
-- `query_result`: raw query output
-- `final_response`: user-facing response
 - `retry_count`: number of fix attempts
+
+> Unlike earlier versions, the agent relies on `messages` as the source of truth (instead of storing `question`, `query_result`, and `final_response` fields).
 
 ---
 
@@ -153,56 +154,54 @@ A dedicated schema prompt block (`AIS_SCHEMA_INFO`) provides:
 - Critical translation rules, including:
   - Converting natural language vessel categories/statuses into numeric filters
   - Excluding `heading = 511` when calculating heading statistics or filtering for valid headings
+  - “Current state” deduplication using `DISTINCT ON (mmsi)` + `ORDER BY basedatetime DESC`
 - A few-shot set of example questions and expected SQL patterns
 
 This schema context is injected into the agent’s system prompt to reduce hallucinations and enforce consistent query generation.
 
 ---
 
-### 5) Node Implementations
+### 5) Node Implementations (ReAct Loop)
 
-The workflow is composed of five nodes:
+The workflow is composed of four nodes:
 
 #### A) Agent (`agent_node`)
-- Determines whether to respond conversationally or generate a SQL query
-- Uses the schema/rules context to generate SQL
-- Binds the `execute_sql` tool but does not force tool usage (the model chooses)
+- Prunes message history using a **sliding-window trim** before calling the LLM
+  - Uses `trim_messages(...)` with:
+    - `allow_partial=False` to avoid splitting tool-calls from ToolMessages
+    - `start_on="human"` to ensure the window begins with a user message
+- Decides whether to respond conversationally or generate a SQL tool call
+- Supports multi-query tool usage (can call `execute_sql` multiple times for complex questions)
 
 Outputs:
-- If conversational: sets `final_response`
-- If DB needed: sets `sql_query` and clears `final_response`
+- If DB needed: sets `sql_query`, `current_tool_call_id`, resets `retry_count`
+- If conversational: returns a normal assistant message and ends
 
 #### B) Validator (`validator_node`)
-- Reviews the generated SQL for unsafe operations
+- Reviews the generated SQL for unsafe operations and schema violations
 - Rejects queries containing dangerous keywords such as:
   - `DROP`, `DELETE`, `INSERT`, `UPDATE`, `ALTER`
+- Rejects hallucinated column names and invalid typing of `status` / `vesseltype`
 
 Outputs:
 - `validation_status` and optional `critique`
 
 #### C) Executor (`executor_node`)
 - Runs the SQL using the `execute_sql` tool
-- Converts database errors into a failure state for retry logic
+- On success, returns a `ToolMessage` containing SQL output **bound to the original tool_call_id**
+- On DB/tool error, converts failure into `critique` for the fixer
 
 Outputs:
-- `query_result` and optional error `critique`
+- `ToolMessage` (success) or error `critique`
 
 #### D) Fixer (`fixer_node`)
 - Activated when validation fails or execution errors occur
-- Provides the question, broken query, error, and schema to the LLM
-- Forces tool usage (`tool_choice="required"`) to ensure a corrected SQL query is produced
+- Forces tool usage (`tool_choice="required"`) to produce corrected SQL
+- Retries are capped at 3 attempts; after that, it returns a `ToolMessage` error so the agent can respond naturally
 
 Outputs:
 - Updated `sql_query`
 - Incremented `retry_count`
-
-#### E) Synthesizer (`synthesizer_node`)
-- Converts the raw SQL output into a clean, user-facing explanation
-- If results are empty, states that no vessels matched
-- If errors persist after retries, returns a generic failure response
-
-Outputs:
-- `final_response`
 
 ---
 
@@ -211,44 +210,16 @@ Outputs:
 The notebook uses `langgraph.graph.StateGraph` to define execution flow and conditional routing.
 
 Routing behavior:
-- If the agent decides no SQL is needed → end immediately
-- Otherwise:
-  - `validator` → `executor` → `synthesizer`
-- On invalid SQL or execution failure:
-  - route to `fixer` and retry validation/execution
-- Retries are capped at 3 attempts (`retry_count <= 3`)
+- Agent produces a tool call → `validator` → (`executor` or `fixer`)
+- Successful execution loops back to the **agent** (ReAct: reason → tool → observe → reason)
+- Invalid SQL or execution failure routes to `fixer` and retries validation/execution
+- Retries are capped at 3 attempts; persistent failures are surfaced back to the agent via a ToolMessage error
 
 The final compiled app is produced via:
 
 ```python
-app = workflow.compile()
-```
-
----
-
-### 7) Sample Execution Phase
-
-The notebook includes a small driver function to run example questions through the compiled graph, print the agent’s final response, and catch unexpected runtime errors.
-
-```python
-# --- PHASE 6: EXECUTION ---
-
-def run_query(query: str):
-    print(f"\nUser: '{query}'")
-    initial_state = {"question": query, "retry_count": 0}
-    
-    try:
-        final_state = app.invoke(initial_state)
-        print("\n" + "="*50)
-        print("🤖 Final Answer:")
-        print(final_state.get("final_response", ""))
-        print("="*50)
-    except Exception as e:
-        print(f"\nAn error occurred: {e}")
-
-if __name__ == "__main__":
-    # Test 1: Database Query (Triggers SQL pipeline)
-    run_query("Get 5 unique vessel names and their mmsi numbers that have length greater than 120 meter")
+memory = MemorySaver()
+app = workflow.compile(checkpointer=memory)
 ```
 
 ---
