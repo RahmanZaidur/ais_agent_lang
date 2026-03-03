@@ -216,7 +216,7 @@ Outputs:
 
 ---
 
-![AIS SQL Agent Graph Diagram](agent_graph_diagram_v1_6.png)
+![AIS SQL Agent Graph Diagram](agent_graph_diagram_v8.png)
 
 ### 6) Graph Construction & Routing
 
